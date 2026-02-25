@@ -1,9 +1,12 @@
 from dotenv import load_dotenv
 import streamlit as st
 from langchain_groq import ChatGroq
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.document_loaders import TextLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # -------------------------
-# LOAD ENV
+# LOAD ENV VARIABLES
 # -------------------------
 load_dotenv()
 
@@ -17,13 +20,6 @@ st.set_page_config(
 )
 
 st.title("💬 GreenLake Assist (RAG)")
-
-# -------------------------
-# RELOAD DOCUMENT BUTTON
-# -------------------------
-if st.button("🔄 Reload Document"):
-    st.cache_resource.clear()
-    st.rerun()
 
 # -------------------------
 # CHAT HISTORY
@@ -44,32 +40,28 @@ llm = ChatGroq(
 )
 
 # -------------------------
-# RAG SETUP
+# RAG SETUP (in-memory, FAISS-free)
 # -------------------------
 @st.cache_resource
 def setup_rag():
-    from langchain_community.document_loaders import TextLoader
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
-    from langchain_community.vectorstores import FAISS
-    from langchain_community.embeddings import HuggingFaceEmbeddings
-
-    # Load documents
     loader = TextLoader("sample.txt")
     docs = loader.load()
 
-    # Split documents into chunks
     splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
     split_docs = splitter.split_documents(docs)
 
-    # Create embeddings
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
-    # Create vector store (prebuilt FAISS wheel avoids install issues)
-    vectorstore = FAISS.from_documents(split_docs, embeddings)
+    # simple in-memory retriever
+    retriever = [{"doc": doc, "embedding": embeddings.embed_query(doc.page_content)} for doc in split_docs]
 
-    return vectorstore.as_retriever(search_kwargs={"k": 3})
+    return retriever
 
 retriever = setup_rag()
+
+def simple_retrieve(query):
+    # return top 3 documents (for small datasets)
+    return [item["doc"] for item in retriever][:3]
 
 # -------------------------
 # USER INPUT
@@ -80,23 +72,18 @@ if user_prompt:
     st.chat_message("user").markdown(user_prompt)
     st.session_state.chat_history.append({"role": "user", "content": user_prompt})
 
-    # Retrieve relevant document chunks
-    docs = retriever.invoke(user_prompt)
+    # retrieve context
+    docs = simple_retrieve(user_prompt)
     context = "\n".join([doc.page_content for doc in docs])
 
-    # RAG prompt
     rag_prompt = f"""
 You are an internal company support assistant.
 
 Follow these rules strictly:
-
 1. Answer ONLY from the provided context.
 2. If answer is not available → say "I don't know".
 3. Give clear, simple, user-friendly explanations.
-4. Format answers in steps or bullet points when possible.
-5. Use professional but easy language.
-6. Do not copy text directly — explain in your own words.
-7. Keep answers structured and helpful for employees.
+4. Use bullet points when helpful.
 
 Context:
 {context}
@@ -107,7 +94,6 @@ User Question:
 Helpful Answer:
 """
 
-    # Generate response
     assistant_response = llm.predict(rag_prompt)
 
     st.session_state.chat_history.append({"role": "assistant", "content": assistant_response})
