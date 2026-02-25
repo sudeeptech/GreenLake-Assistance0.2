@@ -8,3 +8,5 @@ langchain-text-splitters
 
 faiss-cpu
 sentence-transformers
+transformers
+torch
