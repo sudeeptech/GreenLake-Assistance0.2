@@ -3,7 +3,7 @@ import streamlit as st
 from langchain_groq import ChatGroq
 
 # -------------------------
-# LOAD ENV VARIABLES
+# LOAD ENV
 # -------------------------
 load_dotenv()
 
@@ -18,7 +18,9 @@ st.set_page_config(
 
 st.title("💬 GreenLake Assist (RAG)")
 
-# reload document when file updated
+# -------------------------
+# RELOAD DOCUMENT BUTTON
+# -------------------------
 if st.button("🔄 Reload Document"):
     st.cache_resource.clear()
     st.rerun()
@@ -51,13 +53,18 @@ def setup_rag():
     from langchain_community.vectorstores import FAISS
     from langchain_community.embeddings import HuggingFaceEmbeddings
 
+    # Load documents
     loader = TextLoader("sample.txt")
     docs = loader.load()
 
+    # Split documents into chunks
     splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
     split_docs = splitter.split_documents(docs)
 
+    # Create embeddings
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+
+    # Create vector store (prebuilt FAISS wheel avoids install issues)
     vectorstore = FAISS.from_documents(split_docs, embeddings)
 
     return vectorstore.as_retriever(search_kwargs={"k": 3})
@@ -73,9 +80,11 @@ if user_prompt:
     st.chat_message("user").markdown(user_prompt)
     st.session_state.chat_history.append({"role": "user", "content": user_prompt})
 
+    # Retrieve relevant document chunks
     docs = retriever.invoke(user_prompt)
     context = "\n".join([doc.page_content for doc in docs])
 
+    # RAG prompt
     rag_prompt = f"""
 You are an internal company support assistant.
 
@@ -98,6 +107,7 @@ User Question:
 Helpful Answer:
 """
 
+    # Generate response
     assistant_response = llm.predict(rag_prompt)
 
     st.session_state.chat_history.append({"role": "assistant", "content": assistant_response})
