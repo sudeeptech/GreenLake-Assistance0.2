@@ -1,8 +1,8 @@
 streamlit
 python-dotenv
 
-langchain
-langchain-community
+langchain==0.1.111
+langchain-community==0.1.50
 langchain-groq
 langchain-text-splitters
 
