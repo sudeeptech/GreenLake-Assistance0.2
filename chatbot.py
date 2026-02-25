@@ -1,14 +1,23 @@
+# chatbot.py
+
+import os
 from dotenv import load_dotenv
 import streamlit as st
-from langchain_groq import ChatGroq
+
+# Official Groq SDK
+from groq import GroqClient
+
+# Embeddings & Document Loading
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.document_loaders import TextLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # -------------------------
 # LOAD ENV VARIABLES
 # -------------------------
 load_dotenv()
+
+# Make sure you have GROQ_API_KEY in your .env
+# GROQ_API_KEY=your_api_key_here
 
 # -------------------------
 # STREAMLIT PAGE SETUP
@@ -18,7 +27,6 @@ st.set_page_config(
     page_icon="🤖",
     layout="centered",
 )
-
 st.title("💬 GreenLake Assist (RAG)")
 
 # -------------------------
@@ -32,35 +40,52 @@ for message in st.session_state.chat_history:
         st.markdown(message["content"])
 
 # -------------------------
-# LLM INIT (Groq)
+# INIT GROQ CLIENT
 # -------------------------
-llm = ChatGroq(
-    model="llama-3.3-70b-versatile",
-    temperature=0.0,
-)
+client = GroqClient(api_key=os.getenv("GROQ_API_KEY"))
 
 # -------------------------
-# RAG SETUP (in-memory, FAISS-free)
+# SIMPLE PYTHON TEXT SPLITTER
+# -------------------------
+def split_text(text, chunk_size=500, overlap=50):
+    chunks = []
+    start = 0
+    while start < len(text):
+        end = start + chunk_size
+        chunks.append(text[start:end])
+        start += chunk_size - overlap
+    return chunks
+
+# -------------------------
+# RAG SETUP (in-memory)
 # -------------------------
 @st.cache_resource
 def setup_rag():
-    loader = TextLoader("sample.txt")
-    docs = loader.load()
+    try:
+        loader = TextLoader("sample.txt")
+        docs = loader.load()
+    except FileNotFoundError:
+        print("Error: sample.txt not found!")
+        return []
+    except Exception as e:
+        print(f"Error loading document: {e}")
+        return []
 
-    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-    split_docs = splitter.split_documents(docs)
+    split_docs = []
+    for doc in docs:
+        chunks = split_text(doc.page_content, chunk_size=500, overlap=50)
+        for chunk in chunks:
+            split_docs.append({"page_content": chunk})
 
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-
-    # simple in-memory retriever
-    retriever = [{"doc": doc, "embedding": embeddings.embed_query(doc.page_content)} for doc in split_docs]
+    retriever = [{"doc": doc, "embedding": embeddings.embed_query(doc["page_content"])} for doc in split_docs]
 
     return retriever
 
 retriever = setup_rag()
 
 def simple_retrieve(query):
-    # return top 3 documents (for small datasets)
+    """Return top 3 document chunks (small dataset)"""
     return [item["doc"] for item in retriever][:3]
 
 # -------------------------
@@ -72,9 +97,9 @@ if user_prompt:
     st.chat_message("user").markdown(user_prompt)
     st.session_state.chat_history.append({"role": "user", "content": user_prompt})
 
-    # retrieve context
+    # Retrieve relevant docs
     docs = simple_retrieve(user_prompt)
-    context = "\n".join([doc.page_content for doc in docs])
+    context = "\n".join([doc["page_content"] for doc in docs])
 
     rag_prompt = f"""
 You are an internal company support assistant.
@@ -94,9 +119,16 @@ User Question:
 Helpful Answer:
 """
 
-    assistant_response = llm.predict(rag_prompt)
+    # -------------------------
+    # ✅ Use raw Groq SDK for response
+    # -------------------------
+    result = client.chat(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": rag_prompt}],
+    )
+    assistant_response = result.message["content"]
 
+    # Display assistant response
     st.session_state.chat_history.append({"role": "assistant", "content": assistant_response})
-
     with st.chat_message("assistant"):
         st.markdown(assistant_response)
