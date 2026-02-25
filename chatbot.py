@@ -2,14 +2,15 @@ import streamlit as st
 from dotenv import load_dotenv
 import os
 
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import TextLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_groq import ChatGroq
 from langchain.chains import RetrievalQA
 
 # -----------------------------
-# LOAD ENV
+# LOAD ENV VARIABLES
 # -----------------------------
 load_dotenv()
 
@@ -17,7 +18,7 @@ load_dotenv()
 # STREAMLIT UI
 # -----------------------------
 st.set_page_config(page_title="GreenLake AI Chatbot")
-st.title("📄 Chat with Document")
+st.title("📄 Chat with Document (RAG)")
 
 # -----------------------------
 # LOAD DOCUMENT
@@ -36,18 +37,27 @@ text_splitter = RecursiveCharacterTextSplitter(
 docs = text_splitter.split_documents(documents)
 
 # -----------------------------
-# CREATE EMBEDDINGS + VECTOR DB
+# LOCAL EMBEDDINGS (FREE)
 # -----------------------------
-embeddings = OpenAIEmbeddings()
+embeddings = HuggingFaceEmbeddings(
+    model_name="sentence-transformers/all-MiniLM-L6-v2"
+)
+
+# -----------------------------
+# VECTOR STORE
+# -----------------------------
 vectorstore = FAISS.from_documents(docs, embeddings)
 
 # -----------------------------
-# LLM
+# GROQ LLM
 # -----------------------------
-llm = ChatOpenAI(temperature=0)
+llm = ChatGroq(
+    groq_api_key=os.getenv("GROQ_API_KEY"),
+    model_name="llama3-8b-8192"
+)
 
 # -----------------------------
-# QA CHAIN
+# RETRIEVAL QA
 # -----------------------------
 qa_chain = RetrievalQA.from_chain_type(
     llm=llm,
