@@ -1,103 +1,131 @@
-import os
-import streamlit as st
 from dotenv import load_dotenv
-
-from langchain_community.document_loaders import TextLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
-
+import streamlit as st
 from langchain_groq import ChatGroq
-from langchain_core.prompts import ChatPromptTemplate
-from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain.chains.retrieval import create_retrieval_chain
 
-# -----------------------------
-# LOAD ENV
-# -----------------------------
+# -------------------------
+# LOAD ENV VARIABLES
+# -------------------------
 load_dotenv()
 
-if not os.getenv("GROQ_API_KEY"):
-    st.error("❌ GROQ_API_KEY missing in .env file")
-    st.stop()
+# -------------------------
+# STREAMLIT PAGE SETUP
+# -------------------------
+st.set_page_config(
+    page_title="GreenLake Assist",
+    page_icon="🤖",
+    layout="centered",
+)
 
-# -----------------------------
-# STREAMLIT PAGE
-# -----------------------------
-st.set_page_config(page_title="GreenLake Assist", page_icon="🤖")
-st.title("💬 GreenLake Assist — Chat with Document")
+st.title("💬 GreenLake Assist (RAG)")
 
-# -----------------------------
-# RAG SETUP
-# -----------------------------
-@st.cache_resource
-def setup_rag():
-    loader = TextLoader("sample.txt")
-    documents = loader.load()
+# reload document when file updated
+if st.button("🔄 Reload Document"):
+    st.cache_resource.clear()
+    st.rerun()
 
-    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-    docs = splitter.split_documents(documents)
-
-    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-    vectorstore = FAISS.from_documents(docs, embeddings)
-
-    return vectorstore.as_retriever(search_kwargs={"k": 3})
-
-retriever = setup_rag()
-
-# -----------------------------
-# LLM
-# -----------------------------
-llm = ChatGroq(groq_api_key=os.getenv("GROQ_API_KEY"), model_name="llama3-8b-8192", temperature=0)
-
-# -----------------------------
-# Prompt & Chains
-# -----------------------------
-prompt = ChatPromptTemplate.from_template("""
-You are an internal company assistant.
-
-Answer ONLY from the provided context.
-If answer is not available → say "I don't know".
-Use simple professional language.
-Use bullet points if helpful.
-
-Context:
-{context}
-
-Question:
-{input}
-
-Answer:
-""")
-
-document_chain = create_stuff_documents_chain(llm, prompt)
-retrieval_chain = create_retrieval_chain(retriever, document_chain)
-
-# -----------------------------
-# Chat history
-# -----------------------------
+# -------------------------
+# CHAT HISTORY
+# -------------------------
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
+# display chat history
 for message in st.session_state.chat_history:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# -----------------------------
-# User input
-# -----------------------------
+# -------------------------
+# LLM INIT (Groq)
+# -------------------------
+llm = ChatGroq(
+    model="llama-3.3-70b-versatile",
+    temperature=0.0,
+)
+
+# -------------------------
+# RAG SETUP (runs once)
+# -------------------------
+@st.cache_resource
+def setup_rag():
+
+    from langchain_community.document_loaders import TextLoader
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+    from langchain_community.vectorstores import FAISS
+    from langchain_community.embeddings import HuggingFaceEmbeddings
+
+    # load document
+    loader = TextLoader("sample.txt")
+    docs = loader.load()
+
+    # split text into chunks
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=500,
+        chunk_overlap=50
+    )
+    split_docs = splitter.split_documents(docs)
+
+    # create embeddings
+    embeddings = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/all-MiniLM-L6-v2"
+    )
+
+    # create vector database
+    vectorstore = FAISS.from_documents(split_docs, embeddings)
+
+    return vectorstore.as_retriever(search_kwargs={"k": 3})
+
+
+# initialize retriever
+retriever = setup_rag()
+
+# -------------------------
+# USER INPUT
+# -------------------------
 user_prompt = st.chat_input("Ask from document...")
 
 if user_prompt:
+
+    # show user message
     st.chat_message("user").markdown(user_prompt)
-    st.session_state.chat_history.append({"role": "user", "content": user_prompt})
+    st.session_state.chat_history.append(
+        {"role": "user", "content": user_prompt}
+    )
 
-    try:
-        response = retrieval_chain.invoke({"input": user_prompt})
-        assistant_response = response["answer"]
-    except Exception as e:
-        assistant_response = f"Error: {e}"
+    # retrieve relevant document chunks
+    docs = retriever.invoke(user_prompt)
+    context = "\n".join([doc.page_content for doc in docs])
 
-    st.session_state.chat_history.append({"role": "assistant", "content": assistant_response})
+    # RAG prompt
+    rag_prompt = f"""
+You are an internal company support assistant.
+
+Follow these rules strictly:
+
+1. Answer ONLY from the provided context.
+2. If answer is not available → say "I don't know".
+3. Give clear, simple, user-friendly explanations.
+4. Format answers in steps or bullet points when possible.
+5. Use professional but easy language.
+6. Do not copy text directly — explain in your own words.
+7. Keep answers structured and helpful for employees.
+
+Context:
+{context}
+
+User Question:
+{user_prompt}
+
+Helpful Answer:
+"""
+
+    # generate response
+    assistant_response = llm.predict(rag_prompt)
+
+    # save response
+    st.session_state.chat_history.append(
+        {"role": "assistant", "content": assistant_response}
+    )
+
+    # display response
     with st.chat_message("assistant"):
         st.markdown(assistant_response)
