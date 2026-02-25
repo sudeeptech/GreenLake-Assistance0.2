@@ -1,12 +1,8 @@
 streamlit
 python-dotenv
-
-langchain
+langchain==0.1.111
 langchain-community
 langchain-groq
 langchain-text-splitters
-
 faiss-cpu
 sentence-transformers
-transformers
-torch
